@@ -2,12 +2,16 @@ import streamlit as st
 import threading
 import os
 import asyncio
+import sys
 
-# --- 1. THE GLOBAL LOCK ---
-# This check is the "Gold Standard" for keeping only 1 bot alive on Streamlit
-if "bot_instance_running" not in st.runtime.stats.cache_stats.get_summary():
-    # We use a dummy key in Streamlit's internal runtime to track global state
-    pass 
+# --- 1. THE "ULTIMATE" GLOBAL LOCK ---
+# We check if our custom 'bot_lock' exists in the system modules.
+# This prevents the bot from starting twice, even if the page is refreshed.
+if "bot_lock" not in sys.modules:
+    sys.modules["bot_lock"] = True
+    FIRST_RUN = True
+else:
+    FIRST_RUN = False
 
 # --- 2. STREAMLIT UI ---
 st.set_page_config(page_title="Bot Server", page_icon="🚀")
@@ -18,7 +22,7 @@ st.write("The bot is running in the background.")
 for key, value in st.secrets.items():
     os.environ[key] = str(value)
 
-# --- 3. YOUR CODE (Scope Fixed) ---
+# --- 3. YOUR CODE ---
 RAW_CODE = """
 import discord
 import asyncio
@@ -44,7 +48,7 @@ async def status_loop():
 
 @bot.event
 async def on_ready():
-    # We define the task directly here to avoid NameErrors in exec scope
+    # Define and start task in one go
     bot.loop.create_task(status_loop())
     print(f"Logged in as {bot.user}")
 
@@ -52,26 +56,22 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 bot.run(TOKEN)
 """
 
-# --- 4. SECURE STARTUP ENGINE ---
+# --- 4. STARTUP ENGINE ---
 def run_bot():
-    # Create isolated environment for exec
-    safe_globals = {
-        "discord": __import__("discord"),
-        "asyncio": __import__("asyncio"),
-        "time": __import__("time"),
-        "os": __import__("os")
-    }
-    try:
-        exec(RAW_CODE, safe_globals)
-    except Exception as e:
-        print(f"CRITICAL BOT ERROR: {e}")
+    # Setup new loop for this specific background thread
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    # Passing 'globals()' ensures functions can see each other
+    exec(RAW_CODE, globals())
 
-# This logic ensures that even with multiple page refreshes, 
-# only ONE thread is ever spawned per server session.
-if not hasattr(st, "already_started_globally"):
+if FIRST_RUN:
     thread = threading.Thread(target=run_bot, daemon=True)
     thread.start()
-    st.already_started_globally = True
-    st.success("Bot started!")
+    st.success("🚀 Bot launched for the first time!")
 else:
-    st.info("Bot is already active in the background.")
+    st.info("ℹ️ Bot is already running in the background.")
+
+# Show a small clock so the user knows the page is "alive"
+st.divider()
+st.caption(f"Last page refresh: {time.strftime('%H:%M:%S')}")
